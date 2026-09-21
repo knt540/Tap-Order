@@ -56,12 +56,6 @@ body{
   text-transform:uppercase;
 }
 .brand .right{display:flex;align-items:center;gap:10px}
-.brand .sub{
-  font-size:10px;
-  letter-spacing:.22em;
-  text-transform:uppercase;
-  color:var(--ink-dim);
-}
 .snd{
   display:flex;align-items:center;gap:6px;
   padding:6px 9px;
@@ -117,10 +111,10 @@ body{
   font-family:var(--fd);font-weight:500;line-height:1;
   font-variant-numeric:tabular-nums;
 }
-#time{font-size:34px;letter-spacing:-.02em}
-#nextv{font-size:22px;color:var(--brass)}
-#missv{font-size:22px}
-.status.warn #missv{color:var(--alert)}
+#st1v{font-size:34px;letter-spacing:-.02em}
+#st2v{font-size:22px;color:var(--brass)}
+#st3v{font-size:22px}
+.status.warn #st3v{color:var(--alert)}
 
 /* board */
 .board-wrap{position:relative}
@@ -157,6 +151,9 @@ body{
 }
 .cell.hit{border-color:var(--brass);background:rgba(198,169,107,.14)}
 .cell.miss{border-color:var(--alert);background:rgba(185,82,74,.16)}
+/* 図形メモリー */
+.cell.lit{background:var(--brass);border-color:var(--brass)}
+.cell.found{background:rgba(198,169,107,.26);border-color:var(--brass-soft)}
 
 /* overlay */
 .overlay{
@@ -168,6 +165,7 @@ body{
   padding:20px;
 }
 .count{font-family:var(--fd);font-size:72px;font-weight:500;line-height:1;letter-spacing:-.03em;color:var(--brass)}
+.count.txt{font-size:30px;letter-spacing:.14em}
 .ov-inner{display:flex;flex-direction:column;align-items:center;gap:6px}
 .ov-label{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-dim)}
 .ov-time{font-family:var(--fd);font-size:50px;font-weight:500;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
@@ -210,21 +208,20 @@ body{
   <header class="brand">
     <h1>Tap&nbsp;Order</h1>
     <div class="right">
-      <span class="sub">Speed</span>
       <button class="snd" id="snd" aria-pressed="true" aria-label="効果音の切り替え"><span class="dot"></span>Sound</button>
     </div>
   </header>
 
   <div class="modes" role="tablist" aria-label="モード">
-    <button class="mode" role="tab" aria-selected="true">早押し</button>
+    <button class="mode" role="tab" data-mode="speed" aria-selected="true">早押し</button>
     <button class="mode" role="tab" aria-selected="false" disabled>順番メモリー<small>準備中</small></button>
-    <button class="mode" role="tab" aria-selected="false" disabled>図形メモリー<small>準備中</small></button>
+    <button class="mode" role="tab" data-mode="pattern" aria-selected="false">図形メモリー</button>
   </div>
 
   <div class="status" id="status">
-    <div class="stat"><span class="k">Time</span><span class="v" id="time">0.000</span></div>
-    <div class="stat"><span class="k">Next</span><span class="v" id="nextv">1</span></div>
-    <div class="stat"><span class="k">Miss</span><span class="v" id="missv">0</span></div>
+    <div class="stat"><span class="k" id="st1k">Time</span><span class="v" id="st1v">0.000</span></div>
+    <div class="stat"><span class="k" id="st2k">Next</span><span class="v" id="st2v">1</span></div>
+    <div class="stat"><span class="k" id="st3k">Miss</span><span class="v" id="st3v">0</span></div>
   </div>
 
   <div class="board-wrap">
@@ -232,11 +229,11 @@ body{
     <div class="overlay" id="overlay">
       <div class="ov-inner" id="ovReady">
         <span class="ov-label">Ready</span>
-        <span class="ov-meta">小さい数字から順にタップ</span>
+        <span class="ov-meta" id="ovHint">小さい数字から順にタップ</span>
       </div>
       <div class="count" id="ovCount" hidden>3</div>
       <div class="ov-inner" id="ovResult" hidden>
-        <span class="ov-label">Clear</span>
+        <span class="ov-label" id="ovLabel">Clear</span>
         <span class="ov-time" id="ovTime">0.000</span>
         <span class="ov-meta" id="ovMeta">ミス 0 ／ 5×5</span>
         <span class="ov-best" id="ovBest"></span>
@@ -258,12 +255,21 @@ body{
 <script>
 (function(){
   var $ = function(id){ return document.getElementById(id); };
-  var board=$('board'), overlay=$('overlay'), ovReady=$('ovReady'), ovCount=$('ovCount'),
-      ovResult=$('ovResult'), ovTime=$('ovTime'), ovMeta=$('ovMeta'), ovBest=$('ovBest'),
-      timeEl=$('time'), nextEl=$('nextv'), missEl=$('missv'), statusEl=$('status'),
-      goBtn=$('go'), sizesEl=$('sizes'), bestEl=$('best'), bestLabel=$('bestLabel');
+  var board=$('board'), overlay=$('overlay'), ovReady=$('ovReady'), ovHint=$('ovHint'),
+      ovCount=$('ovCount'), ovResult=$('ovResult'), ovLabel=$('ovLabel'), ovTime=$('ovTime'),
+      ovMeta=$('ovMeta'), ovBest=$('ovBest'), statusEl=$('status'),
+      st1k=$('st1k'), st1v=$('st1v'), st2k=$('st2k'), st2v=$('st2v'), st3k=$('st3k'), st3v=$('st3v'),
+      goBtn=$('go'), sizesEl=$('sizes'), modesEl=document.querySelector('.modes'),
+      bestEl=$('best'), bestLabel=$('bestLabel');
 
-  var S = { n:5, next:1, misses:0, t0:0, raf:0, phase:'idle', timers:[] };
+  var MAX_K = 5;        // 図形メモリーの点灯数の上限
+  var MAX_MISS = 3;
+
+  var S = {
+    mode:'speed', n:5, phase:'idle', timers:[],
+    next:1, misses:0, t0:0, raf:0,          // 早押し
+    stage:1, k:3, found:0, target:[]        // 図形メモリー
+  };
 
   /* ---- 効果音（WebAudioで合成。音源ファイルなしでオフラインでも鳴る） ---- */
   var AC = null, muted = false;
@@ -312,10 +318,16 @@ body{
     miss: function(){ pop({ type:'triangle', f0: 190, f1: 62, dur: 0.14, gain: 0.16, click: 0.03, clickHz: 700 }); },
     tick: function(){ pop({ f0: 440, f1: 410, dur: 0.05, gain: 0.08 }); },
     go:   function(){ pop({ f0: 760, f1: 700, dur: 0.13, gain: 0.13 }); },
+    show: function(){ pop({ f0: 330, f1: 305, dur: 0.20, gain: 0.10 }); },
     clear:function(){
       pop({ f0: 700, f1: 200, dur: 0.06, gain: 0.18, click: 0.07, at: 0 });
       pop({ f0: 880, f1: 240, dur: 0.06, gain: 0.18, click: 0.07, at: 0.09 });
       pop({ f0:1150, f1: 300, dur: 0.10, gain: 0.20, click: 0.08, at: 0.18 });
+    },
+    over: function(){
+      pop({ type:'triangle', f0: 520, f1: 300, dur: 0.14, gain: 0.15, at: 0 });
+      pop({ type:'triangle', f0: 400, f1: 230, dur: 0.16, gain: 0.15, at: 0.13 });
+      pop({ type:'triangle', f0: 290, f1: 140, dur: 0.30, gain: 0.16, at: 0.27 });
     }
   };
 
@@ -329,137 +341,310 @@ body{
   });
   paintSnd();
 
+  /* ---- 共通 ---- */
   function fmt(ms){ return (ms/1000).toFixed(3); }
-  function bestKey(n){ return 'tapOrder.best.speed.' + n; }
-  function readBest(n){ try{ var v=localStorage.getItem(bestKey(n)); return v ? +v : null; }catch(e){ return null; } }
-  function writeBest(n,ms){ try{ localStorage.setItem(bestKey(n), String(ms)); }catch(e){} }
+  function key(){ return 'tapOrder.best.' + S.mode + '.' + S.n; }
+  function readBest(){ try{ var v=localStorage.getItem(key()); return v ? +v : null; }catch(e){ return null; } }
+  function writeBest(v){ try{ localStorage.setItem(key(), String(v)); }catch(e){} }
   function buzz(p){ try{ if(navigator.vibrate) navigator.vibrate(p); }catch(e){} }
   function clearTimers(){ S.timers.forEach(clearTimeout); S.timers=[]; }
   function later(fn,ms){ S.timers.push(setTimeout(fn,ms)); }
+  function cells(){ return board.querySelectorAll('.cell'); }
+  function each(list, fn){ Array.prototype.forEach.call(list, fn); }
 
   function showBest(){
-    var b = readBest(S.n);
-    bestEl.textContent = b===null ? '—' : fmt(b) + ' s';
+    var b = readBest();
     bestLabel.textContent = 'ベスト（' + S.n + '×' + S.n + '）';
+    if(b === null) bestEl.textContent = '—';
+    else bestEl.textContent = S.mode==='speed' ? (fmt(b) + ' s') : ('STAGE ' + b);
   }
 
-  function build(veiled){
-    var n=S.n, total=n*n, i, j, t;
+  function geometry(){
+    var n = S.n;
     board.style.setProperty('--n', n);
     board.style.setProperty('--gap', n===3 ? '10px' : n===4 ? '8px' : '6px');
     board.style.setProperty('--fs', n===3 ? '32px' : n===4 ? '25px' : '20px');
-    var nums=[];
+  }
+
+  // 早押し用：1〜N²をシャッフルして並べる
+  function buildNumbers(veiled){
+    geometry();
+    var total=S.n*S.n, nums=[], i, j, t;
     for(i=1;i<=total;i++) nums.push(i);
     for(i=nums.length-1;i>0;i--){ j=Math.floor(Math.random()*(i+1)); t=nums[i]; nums[i]=nums[j]; nums[j]=t; }
     board.textContent='';
     nums.forEach(function(v){
       var b=document.createElement('button');
       b.className='cell' + (veiled ? ' veiled' : ' idle');
-      b.type='button';
-      b.dataset.v=v;
-      b.textContent=v;
+      b.type='button'; b.dataset.v=v; b.textContent=v;
       board.appendChild(b);
     });
   }
 
+  // 図形メモリー用：無地のマス
+  function buildBlank(){
+    geometry();
+    board.textContent='';
+    for(var i=0;i<S.n*S.n;i++){
+      var b=document.createElement('button');
+      b.className='cell'; b.type='button'; b.dataset.i=i;
+      board.appendChild(b);
+    }
+  }
+
   function setPhase(p){
     S.phase=p;
-    var running = (p==='playing' || p==='count');
-    Array.prototype.forEach.call(sizesEl.querySelectorAll('.size'), function(b){ b.disabled=running; });
+    var running = (p!=='idle' && p!=='result');
+    each(sizesEl.querySelectorAll('.size'), function(b){ b.disabled=running; });
+    each(modesEl.querySelectorAll('.mode'), function(b){
+      if(b.dataset.mode) b.disabled = running;
+    });
     goBtn.textContent = running ? '中止' : (p==='result' ? 'もう一度' : 'スタート');
     goBtn.classList.toggle('ghost', running);
   }
 
-  function resetStats(){
-    S.next=1; S.misses=0;
-    timeEl.textContent='0.000'; nextEl.textContent='1'; missEl.textContent='0';
-    statusEl.classList.remove('warn');
+  function setOverlay(which){
+    overlay.hidden = (which === null);
+    ovReady.hidden  = (which !== 'ready');
+    ovCount.hidden  = (which !== 'count');
+    ovResult.hidden = (which !== 'result');
   }
 
-  function reset(){
-    clearTimers(); cancelAnimationFrame(S.raf);
-    resetStats();
-    build(false);
-    overlay.hidden=false; ovReady.hidden=false; ovCount.hidden=true; ovResult.hidden=true;
-    setPhase('idle');
-    showBest();
-  }
-
-  function start(){
-    clearTimers(); cancelAnimationFrame(S.raf);
-    resetStats();
-    build(true);
-    overlay.hidden=false; ovReady.hidden=true; ovResult.hidden=true; ovCount.hidden=false;
-    setPhase('count');
-    var c=3;
-    ovCount.textContent=c;
-    var tick=function(){
+  function countdown(done){
+    var c = 3;
+    ovCount.classList.remove('txt');
+    ovCount.textContent = c;
+    setOverlay('count');
+    var tick = function(){
       c--;
       if(c>0){ ovCount.textContent=c; buzz(10); sfx.tick(); later(tick,700); }
-      else { ovCount.textContent='GO'; buzz(20); sfx.go(); later(begin,450); }
+      else { ovCount.textContent='GO'; buzz(20); sfx.go(); later(done,450); }
     };
     later(tick,700);
   }
 
-  function begin(){
-    overlay.hidden=true;
-    Array.prototype.forEach.call(board.querySelectorAll('.cell'), function(c){ c.classList.remove('veiled'); });
-    setPhase('playing');
-    S.t0=performance.now();
-    var loop=function(){ timeEl.textContent=fmt(performance.now()-S.t0); S.raf=requestAnimationFrame(loop); };
-    S.raf=requestAnimationFrame(loop);
+  /* ---- 早押しモード ---- */
+  function speedReset(){
+    S.next=1; S.misses=0;
+    st1k.textContent='Time'; st1v.textContent='0.000';
+    st2k.textContent='Next'; st2v.textContent='1';
+    st3k.textContent='Miss'; st3v.textContent='0';
+    statusEl.classList.remove('warn');
+    ovHint.textContent='小さい数字から順にタップ';
+    buildNumbers(false);
   }
 
-  function finish(){
-    var ms=performance.now()-S.t0;
-    cancelAnimationFrame(S.raf);
-    timeEl.textContent=fmt(ms);
-    var prev=readBest(S.n);
-    var isBest = (prev===null || ms<prev);
-    if(isBest) writeBest(S.n, ms);
-    ovTime.textContent=fmt(ms);
-    ovMeta.textContent='ミス ' + S.misses + ' ／ ' + S.n + '×' + S.n;
-    ovBest.textContent = isBest ? '自己ベスト更新' : ('ベスト ' + fmt(prev) + ' s');
-    overlay.hidden=false; ovReady.hidden=true; ovCount.hidden=true; ovResult.hidden=false;
-    setPhase('result');
-    showBest();
-    buzz([18,60,18]); sfx.clear();
+  function speedStart(){
+    S.next=1; S.misses=0;
+    st1v.textContent='0.000'; st2v.textContent='1'; st3v.textContent='0';
+    statusEl.classList.remove('warn');
+    buildNumbers(true);
+    setPhase('count');
+    countdown(function(){
+      setOverlay(null);
+      each(cells(), function(c){ c.classList.remove('veiled'); });
+      setPhase('playing');
+      S.t0=performance.now();
+      var loop=function(){ st1v.textContent=fmt(performance.now()-S.t0); S.raf=requestAnimationFrame(loop); };
+      S.raf=requestAnimationFrame(loop);
+    });
   }
 
-  board.addEventListener('pointerdown', function(e){
-    if(S.phase!=='playing') return;
-    var cell=e.target.closest('.cell');
-    if(!cell || cell.classList.contains('done')) return;
+  function speedTap(cell){
+    if(cell.classList.contains('done')) return;
     if(+cell.dataset.v === S.next){
       cell.classList.add('hit');
       (function(c){ later(function(){ c.classList.remove('hit'); c.classList.add('done'); }, 90); })(cell);
       S.next++;
-      nextEl.textContent = S.next > S.n*S.n ? '—' : S.next;
+      st2v.textContent = S.next > S.n*S.n ? '—' : S.next;
       buzz(8); sfx.tap();
-      if(S.next > S.n*S.n) finish();
+      if(S.next > S.n*S.n) speedFinish();
     } else {
-      S.misses++;
-      missEl.textContent=S.misses;
+      S.misses++; st3v.textContent=S.misses;
       statusEl.classList.add('warn');
       cell.classList.add('miss');
       (function(c){ later(function(){ c.classList.remove('miss'); }, 180); })(cell);
       later(function(){ statusEl.classList.remove('warn'); }, 400);
       buzz(40); sfx.miss();
     }
+  }
+
+  function speedFinish(){
+    var ms=performance.now()-S.t0;
+    cancelAnimationFrame(S.raf);
+    st1v.textContent=fmt(ms);
+    var prev=readBest(), isBest = (prev===null || ms<prev);
+    if(isBest) writeBest(ms);
+    ovLabel.textContent='Clear';
+    ovTime.textContent=fmt(ms);
+    ovMeta.textContent='ミス ' + S.misses + ' ／ ' + S.n + '×' + S.n;
+    ovBest.textContent = isBest ? '自己ベスト更新' : ('ベスト ' + fmt(prev) + ' s');
+    setOverlay('result'); setPhase('result'); showBest();
+    buzz([18,60,18]); sfx.clear();
+  }
+
+  /* ---- 図形メモリーモード ---- */
+  function kFor(stage){ return Math.min(MAX_K, 2 + stage); }
+
+  // 上限に達したあとは表示時間を1ステージごとに10%短縮（下限0.5秒）
+  function showMs(stage){
+    var k = kFor(stage);
+    var t = Math.min(3500, 900 + 220 * k);
+    var capStage = MAX_K - 2;               // kが上限に達するステージ
+    if(stage > capStage) t *= Math.pow(0.9, stage - capStage);
+    return Math.max(500, Math.round(t));
+  }
+
+  function patternReset(){
+    S.stage=1; S.misses=0; S.found=0; S.target=[];
+    st1k.textContent='Stage'; st1v.textContent='1';
+    st2k.textContent='Found'; st2v.textContent='0 / ' + kFor(1);
+    st3k.textContent='Miss';  st3v.textContent='0 / ' + MAX_MISS;
+    statusEl.classList.remove('warn');
+    ovHint.textContent='光ったマスを全部おぼえてタップ';
+    buildBlank();
+  }
+
+  function patternStatus(){
+    st1v.textContent = S.stage;
+    st2v.textContent = S.found + ' / ' + S.k;
+    st3v.textContent = S.misses + ' / ' + MAX_MISS;
+  }
+
+  function patternStart(){
+    S.stage=1; S.misses=0;
+    buildBlank();
+    S.k = kFor(1); S.found = 0; patternStatus();
+    setPhase('count');
+    countdown(function(){ patternShow(); });
+  }
+
+  // ステージ見出し（2ステージ目以降と、ミス後の再挑戦で使う）
+  function patternBanner(text, then){
+    ovCount.classList.add('txt');
+    ovCount.textContent = text;
+    setOverlay('count');
+    later(then, 800);
+  }
+
+  function patternShow(){
+    S.k = kFor(S.stage);
+    S.found = 0;
+    patternStatus();
+    setOverlay(null);
+    setPhase('show');
+
+    var list = cells(), idx = [], i, j, t;
+    for(i=0;i<list.length;i++) idx.push(i);
+    for(i=idx.length-1;i>0;i--){ j=Math.floor(Math.random()*(i+1)); t=idx[i]; idx[i]=idx[j]; idx[j]=t; }
+    S.target = idx.slice(0, S.k);
+
+    each(list, function(c){ c.className='cell'; });
+    S.target.forEach(function(i){ list[i].classList.add('lit'); });
+    buzz(14); sfx.show();
+
+    later(function(){
+      each(cells(), function(c){ c.classList.remove('lit'); });
+      setPhase('recall');
+    }, showMs(S.stage));
+  }
+
+  function patternTap(cell){
+    var i = +cell.dataset.i;
+    if(cell.classList.contains('found')) return;      // 二度押しはノーカウント
+    if(S.target.indexOf(i) >= 0){
+      cell.classList.add('found');
+      S.found++; patternStatus();
+      buzz(8); sfx.tap();
+      if(S.found === S.k) patternStageClear();
+    } else {
+      S.misses++; patternStatus();
+      statusEl.classList.add('warn');
+      cell.classList.add('miss');
+      buzz(40); sfx.miss();
+      setPhase('wait');
+      later(function(){ statusEl.classList.remove('warn'); }, 400);
+      if(S.misses >= MAX_MISS){
+        later(patternOver, 700);
+      } else {
+        // 同じステージを、別の問題で出し直す
+        later(function(){
+          patternBanner('RETRY', function(){ patternShow(); });
+        }, 700);
+      }
+    }
+  }
+
+  function patternStageClear(){
+    setPhase('wait');
+    buzz([18,60,18]); sfx.clear();
+    S.stage++;
+    later(function(){
+      patternBanner('STAGE ' + S.stage, function(){ patternShow(); });
+    }, 520);
+  }
+
+  function patternOver(){
+    var cleared = S.stage - 1;
+    var prev=readBest(), isBest = (cleared > 0 && (prev===null || cleared>prev));
+    if(isBest) writeBest(cleared);
+    ovLabel.textContent='Game Over';
+    ovTime.textContent='STAGE ' + cleared;
+    ovMeta.textContent='ミス ' + S.misses + ' ／ ' + S.n + '×' + S.n;
+    ovBest.textContent = isBest ? '自己ベスト更新' : (prev===null ? '' : 'ベスト STAGE ' + prev);
+    ovCount.classList.remove('txt');
+    setOverlay('result'); setPhase('result'); showBest();
+    sfx.over();
+  }
+
+  /* ---- 入力とモード切替 ---- */
+  board.addEventListener('pointerdown', function(e){
+    var cell = e.target.closest('.cell');
+    if(!cell) return;
+    if(S.mode==='speed'){
+      if(S.phase!=='playing') return;
+      speedTap(cell);
+    } else {
+      if(S.phase!=='recall') return;
+      patternTap(cell);
+    }
+  });
+
+  function reset(){
+    clearTimers(); cancelAnimationFrame(S.raf);
+    ovCount.classList.remove('txt');
+    if(S.mode==='speed') speedReset(); else patternReset();
+    setOverlay('ready');
+    setPhase('idle');
+    showBest();
+  }
+
+  function start(){
+    clearTimers(); cancelAnimationFrame(S.raf);
+    ovCount.classList.remove('txt');
+    if(S.mode==='speed') speedStart(); else patternStart();
+  }
+
+  modesEl.addEventListener('click', function(e){
+    var b=e.target.closest('.mode');
+    if(!b || b.disabled || !b.dataset.mode) return;
+    S.mode=b.dataset.mode;
+    each(modesEl.querySelectorAll('.mode'), function(x){ x.setAttribute('aria-selected', String(x===b)); });
+    reset();
   });
 
   sizesEl.addEventListener('click', function(e){
     var b=e.target.closest('.size');
     if(!b || b.disabled) return;
     S.n=+b.dataset.n;
-    Array.prototype.forEach.call(sizesEl.querySelectorAll('.size'), function(x){ x.setAttribute('aria-pressed', x===b); });
+    each(sizesEl.querySelectorAll('.size'), function(x){ x.setAttribute('aria-pressed', String(x===b)); });
     reset();
   });
 
   goBtn.addEventListener('click', function(){
     ctx(); // 最初のタップで音声を有効化（モバイルの制約）
-    if(S.phase==='playing' || S.phase==='count') reset();
-    else start();
+    if(S.phase==='idle' || S.phase==='result') start();
+    else reset();
   });
 
   reset();
