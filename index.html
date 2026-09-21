@@ -55,12 +55,28 @@ body{
   letter-spacing:.14em;
   text-transform:uppercase;
 }
+.brand .right{display:flex;align-items:center;gap:10px}
 .brand .sub{
   font-size:10px;
   letter-spacing:.22em;
   text-transform:uppercase;
   color:var(--ink-dim);
 }
+.snd{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 9px;
+  background:transparent;
+  border:1px solid var(--line);
+  border-radius:99px;
+  color:var(--ink-dim);
+  font-family:var(--fb);
+  font-size:9px;letter-spacing:.18em;text-transform:uppercase;
+  cursor:pointer;
+}
+.snd .dot{width:5px;height:5px;border-radius:50%;background:var(--line)}
+.snd[aria-pressed="true"]{color:var(--ink);border-color:var(--brass-soft)}
+.snd[aria-pressed="true"] .dot{background:var(--brass)}
+.snd:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .modes{display:flex;gap:6px}
 .mode{
   flex:1;
@@ -193,7 +209,10 @@ body{
 <div class="app notranslate" translate="no">
   <header class="brand">
     <h1>Tap&nbsp;Order</h1>
-    <span class="sub">Speed / proto 0.1</span>
+    <div class="right">
+      <span class="sub">Speed</span>
+      <button class="snd" id="snd" aria-pressed="true" aria-label="効果音の切り替え"><span class="dot"></span>Sound</button>
+    </div>
   </header>
 
   <div class="modes" role="tablist" aria-label="モード">
@@ -245,6 +264,70 @@ body{
       goBtn=$('go'), sizesEl=$('sizes'), bestEl=$('best'), bestLabel=$('bestLabel');
 
   var S = { n:5, next:1, misses:0, t0:0, raf:0, phase:'idle', timers:[] };
+
+  /* ---- 効果音（WebAudioで合成。音源ファイルなしでオフラインでも鳴る） ---- */
+  var AC = null, muted = false;
+  try { muted = localStorage.getItem('tapOrder.muted') === '1'; } catch(e){}
+
+  function ctx(){
+    if(!AC){
+      var C = window.AudioContext || window.webkitAudioContext;
+      if(!C) return null;
+      try { AC = new C(); } catch(e){ return null; }
+    }
+    if(AC.state === 'suspended'){ try{ AC.resume(); }catch(e){} }
+    return AC;
+  }
+
+  // プチッという破裂音：短いノイズの立ち上がり＋急降下するサイン波
+  function pop(o){
+    if(muted) return;
+    var c = ctx(); if(!c) return;
+    var t = c.currentTime + (o.at || 0);
+    var dur = o.dur, osc = c.createOscillator(), g = c.createGain();
+    osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(o.f0, t);
+    osc.frequency.exponentialRampToValueAtTime(o.f1, t + dur * 0.85);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(o.gain, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(c.destination);
+    osc.start(t); osc.stop(t + dur + 0.03);
+
+    if(o.click){
+      var len = Math.floor(c.sampleRate * 0.012);
+      var buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+      for(var i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 3);
+      var n = c.createBufferSource(); n.buffer = buf;
+      var bp = c.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = o.clickHz || 2400; bp.Q.value = 0.9;
+      var ng = c.createGain(); ng.gain.value = o.click;
+      n.connect(bp); bp.connect(ng); ng.connect(c.destination);
+      n.start(t);
+    }
+  }
+
+  // 同じ音の連打に聞こえないよう、押すたびに少しだけ音程を散らす
+  var sfx = {
+    tap:  function(){ pop({ f0: 680 + Math.random()*320, f1: 150, dur: 0.055, gain: 0.20, click: 0.09 }); },
+    miss: function(){ pop({ type:'triangle', f0: 190, f1: 62, dur: 0.14, gain: 0.16, click: 0.03, clickHz: 700 }); },
+    tick: function(){ pop({ f0: 440, f1: 410, dur: 0.05, gain: 0.08 }); },
+    go:   function(){ pop({ f0: 760, f1: 700, dur: 0.13, gain: 0.13 }); },
+    clear:function(){
+      pop({ f0: 700, f1: 200, dur: 0.06, gain: 0.18, click: 0.07, at: 0 });
+      pop({ f0: 880, f1: 240, dur: 0.06, gain: 0.18, click: 0.07, at: 0.09 });
+      pop({ f0:1150, f1: 300, dur: 0.10, gain: 0.20, click: 0.08, at: 0.18 });
+    }
+  };
+
+  var sndBtn = $('snd');
+  function paintSnd(){ sndBtn.setAttribute('aria-pressed', String(!muted)); }
+  sndBtn.addEventListener('click', function(){
+    muted = !muted;
+    try { localStorage.setItem('tapOrder.muted', muted ? '1' : '0'); } catch(e){}
+    paintSnd();
+    if(!muted) sfx.tap();
+  });
+  paintSnd();
 
   function fmt(ms){ return (ms/1000).toFixed(3); }
   function bestKey(n){ return 'tapOrder.best.speed.' + n; }
@@ -312,8 +395,8 @@ body{
     ovCount.textContent=c;
     var tick=function(){
       c--;
-      if(c>0){ ovCount.textContent=c; buzz(10); later(tick,700); }
-      else { ovCount.textContent='GO'; buzz(20); later(begin,450); }
+      if(c>0){ ovCount.textContent=c; buzz(10); sfx.tick(); later(tick,700); }
+      else { ovCount.textContent='GO'; buzz(20); sfx.go(); later(begin,450); }
     };
     later(tick,700);
   }
@@ -340,7 +423,7 @@ body{
     overlay.hidden=false; ovReady.hidden=true; ovCount.hidden=true; ovResult.hidden=false;
     setPhase('result');
     showBest();
-    buzz([18,60,18]);
+    buzz([18,60,18]); sfx.clear();
   }
 
   board.addEventListener('pointerdown', function(e){
@@ -352,7 +435,7 @@ body{
       (function(c){ later(function(){ c.classList.remove('hit'); c.classList.add('done'); }, 90); })(cell);
       S.next++;
       nextEl.textContent = S.next > S.n*S.n ? '—' : S.next;
-      buzz(8);
+      buzz(8); sfx.tap();
       if(S.next > S.n*S.n) finish();
     } else {
       S.misses++;
@@ -361,7 +444,7 @@ body{
       cell.classList.add('miss');
       (function(c){ later(function(){ c.classList.remove('miss'); }, 180); })(cell);
       later(function(){ statusEl.classList.remove('warn'); }, 400);
-      buzz(40);
+      buzz(40); sfx.miss();
     }
   });
 
@@ -374,6 +457,7 @@ body{
   });
 
   goBtn.addEventListener('click', function(){
+    ctx(); // 最初のタップで音声を有効化（モバイルの制約）
     if(S.phase==='playing' || S.phase==='count') reset();
     else start();
   });
