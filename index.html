@@ -202,6 +202,30 @@ body{
 }
 .cue.fade{animation:cueOut .8s ease forwards}
 @keyframes cueOut{0%{opacity:1}65%{opacity:1}100%{opacity:0}}
+.cue.big{
+  font-size:42px;letter-spacing:.16em;
+  background:rgba(14,16,18,.2);
+  text-shadow:0 0 24px rgba(198,169,107,.55);
+}
+
+/* クリア演出 */
+.fx{position:absolute;inset:0;pointer-events:none;z-index:6}
+.cue{z-index:5}
+.board-wrap.pulse::after{
+  content:"";position:absolute;inset:-5px;
+  border-radius:15px;pointer-events:none;
+  box-shadow:0 0 0 1px var(--brass), 0 0 34px rgba(198,169,107,.42);
+  animation:pulseOut .55s ease forwards;
+}
+@keyframes pulseOut{from{opacity:.95}to{opacity:0}}
+.board-wrap.shake{animation:shakeFx .38s ease}
+@keyframes shakeFx{
+  15%{transform:translateX(-3px)}
+  35%{transform:translateX(5px)}
+  55%{transform:translateX(-5px)}
+  75%{transform:translateX(3px)}
+  100%{transform:translateX(0)}
+}
 
 /* controls */
 .controls{display:flex;flex-direction:column;gap:10px}
@@ -276,7 +300,7 @@ body{
   color:var(--alert);
   font-weight:500;
 }
-@media (prefers-reduced-motion:reduce){*{transition:none!important}.cue.fade{animation:none}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}.cue.fade,.board-wrap.pulse::after,.board-wrap.shake{animation:none}}
 </style>
 
 <div class="app notranslate" translate="no">
@@ -316,6 +340,7 @@ body{
       </div>
     </div>
     <div class="cue" id="cue" hidden>Your turn</div>
+    <canvas class="fx" id="fx"></canvas>
   </div>
 
   <div class="controls">
@@ -363,7 +388,7 @@ body{
       ovReadyLabel=$('ovReadyLabel'), ovCount=$('ovCount'), ovResult=$('ovResult'), ovLabel=$('ovLabel'), ovTime=$('ovTime'),
       ovMeta=$('ovMeta'), ovBest=$('ovBest'), statusEl=$('status'),
       st1k=$('st1k'), st1v=$('st1v'), st2k=$('st2k'), st2v=$('st2v'), st3k=$('st3k'), st3v=$('st3v'),
-      goBtn=$('go'), pauseBtn=$('pause'), abortBtn=$('abort'), runRow=$('runRow'), cue=$('cue'),
+      goBtn=$('go'), pauseBtn=$('pause'), abortBtn=$('abort'), runRow=$('runRow'), cue=$('cue'), fx=$('fx'), boardWrap=document.querySelector('.board-wrap'),
       sizesEl=$('sizes'), modesEl=document.querySelector('.modes'),
       bestEl=$('best'), bestLabel=$('bestLabel');
 
@@ -539,6 +564,115 @@ body{
     else if(!modal.hidden) closeHelp();
   });
 
+  /* ---- クリア演出 ---- */
+  var REDUCED = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var fxCtx = fx.getContext('2d'), parts = [], fxRaf = 0;
+
+  // 通常UIは真鍮一色のまま。色が出るのはこの演出の中だけ
+  var FX_COLORS = ['#C6A96B','#E8C98A','#F2E4C4','#D98E5A','#7FB39B','#C96F8F'];
+
+  // ステージが上がるほど段階的に派手にする
+  function tierFor(stage){
+    if(stage >= 30) return 5;
+    if(stage >= 20) return 4;
+    if(stage >= 10) return 3;
+    if(stage >= 5)  return 2;
+    if(stage >= 3)  return 1;
+    return 0;
+  }
+
+  var PRAISE = { 3:'Nice', 5:'Great', 10:'Superb', 15:'Amazing', 20:'Unreal', 30:'Legend' };
+
+  function fxResize(){
+    var r = fx.parentNode.getBoundingClientRect();
+    var d = Math.min(2, window.devicePixelRatio || 1);
+    fx.width = Math.round(r.width * d);
+    fx.height = Math.round(r.height * d);
+    fx.style.width = r.width + 'px';
+    fx.style.height = r.height + 'px';
+    fxCtx.setTransform(d, 0, 0, d, 0, 0);
+    return r;
+  }
+
+  function burst(tier){
+    if(REDUCED) return;
+    var r = fxResize();
+    if(r.width < 20) return;          // レイアウト未確定・非表示のときは描かない
+    var n = [18, 30, 48, 74, 110, 150][tier];
+    var sp = [3.2, 4.2, 5.2, 6.4, 7.6, 9][tier];
+    var hues = tier >= 3 ? FX_COLORS.length : 3;
+    for(var i=0;i<n;i++){
+      var a = Math.random() * Math.PI * 2;
+      var v = sp * (0.35 + Math.random() * 0.95);
+      parts.push({
+        x: r.width/2, y: r.height/2,
+        vx: Math.cos(a)*v, vy: Math.sin(a)*v - 1.6,
+        life: 1, decay: 0.011 + Math.random()*0.013,
+        size: 2 + Math.random()*(2 + tier),
+        col: FX_COLORS[(Math.random()*hues)|0],
+        rot: Math.random()*6.28, vr: (Math.random()-0.5)*0.32
+      });
+    }
+    if(!fxRaf) fxRaf = requestAnimationFrame(fxLoop);
+  }
+
+  function fxLoop(){
+    var w = fx.clientWidth, h = fx.clientHeight;
+    fxCtx.clearRect(0, 0, w, h);
+    for(var i=parts.length-1;i>=0;i--){
+      var p = parts[i];
+      p.vy += 0.17; p.vx *= 0.99; p.vy *= 0.99;
+      p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life -= p.decay;
+      if(p.life <= 0 || p.y > h + 40){ parts.splice(i,1); continue; }
+      fxCtx.save();
+      fxCtx.globalAlpha = Math.max(0, p.life);
+      fxCtx.translate(p.x, p.y);
+      fxCtx.rotate(p.rot);
+      fxCtx.fillStyle = p.col;
+      fxCtx.fillRect(-p.size/2, -p.size/2, p.size, p.size*0.62);
+      fxCtx.restore();
+    }
+    if(parts.length) fxRaf = requestAnimationFrame(fxLoop);
+    else { fxRaf = 0; fxCtx.clearRect(0, 0, w, h); }
+  }
+
+  function fxClear(){
+    parts.length = 0;
+    cancelAnimationFrame(fxRaf); fxRaf = 0;
+    if(fx.width) fxCtx.clearRect(0, 0, fx.clientWidth, fx.clientHeight);
+    boardWrap.classList.remove('pulse','shake');
+  }
+
+  // 段数に応じて音数が増える上昇アルペジオ
+  function fanfare(tier){
+    var semis = [0, 4, 7, 12, 16, 19, 24];
+    var count = Math.min(semis.length, 3 + tier);
+    for(var i=0;i<count;i++){
+      var f = 440 * Math.pow(2, semis[i]/12);
+      pop({ type:'triangle', f0:f, f1:f*0.997, dur:0.20, gain:0.13, at:i*0.072, click:0.05 });
+    }
+    if(tier >= 3) pop({ type:'sine', f0:220, f1:219, dur:0.55, gain:0.11 });
+    if(tier >= 5) pop({ type:'triangle', f0:1320, f1:1310, dur:0.45, gain:0.10, at:count*0.072 });
+  }
+
+  var VIBES = [[20],[24],[18,40,28],[18,40,28,40,40],[24,40,24,40,60],[30,40,30,40,30,40,80]];
+
+  // 返り値：称号を出したか（出したときは次の表示を少し待つ）
+  function celebrate(stage){
+    var tier = tierFor(stage);
+    burst(tier);
+    fanfare(tier);
+    buzz(VIBES[tier]);
+    boardWrap.classList.remove('pulse','shake');
+    void boardWrap.offsetWidth;
+    boardWrap.classList.add('pulse');
+    if(tier >= 3) boardWrap.classList.add('shake');
+    later(function(){ boardWrap.classList.remove('pulse','shake'); }, 700);
+    var word = PRAISE[stage];
+    if(word){ showCue(word, { big:true, silent:true, ms:1000 }); return true; }
+    return false;
+  }
+
   /* ---- 共通 ---- */
   function fmt(ms){ return (ms/1000).toFixed(3); }
   function key(){ return 'tapOrder.best.' + S.mode + '.' + S.n; }
@@ -608,15 +742,17 @@ body{
     abortBtn.disabled = !interruptible;
   }
 
-  // 回答開始の合図
-  function showCue(text){
+  // 回答開始の合図／称号表示
+  function showCue(text, o){
+    o = o || {};
     cue.textContent = text || 'Your turn';
+    cue.classList.toggle('big', !!o.big);
     cue.hidden = false;
     cue.classList.remove('fade');
     void cue.offsetWidth;
     cue.classList.add('fade');
-    sfx.turn();
-    later(function(){ cue.hidden = true; }, 800);
+    if(!o.silent) sfx.turn();
+    later(function(){ cue.hidden = true; }, o.ms || 800);
   }
 
   function pauseGame(){
@@ -730,7 +866,13 @@ body{
     ovMeta.textContent='ミス ' + S.misses + ' ／ ' + S.n + '×' + S.n;
     ovBest.textContent = isBest ? '自己ベスト更新' : ('ベスト ' + fmt(prev) + ' s');
     setOverlay('result'); setPhase('result'); showBest();
-    buzz([18,60,18]); sfx.clear();
+    // 自己ベスト更新は最大級の演出にする
+    var tier = isBest ? 4 : 1;
+    burst(tier); fanfare(tier); buzz(VIBES[tier]);
+    boardWrap.classList.add('pulse');
+    if(isBest) boardWrap.classList.add('shake');
+    later(function(){ boardWrap.classList.remove('pulse','shake'); }, 700);
+    if(isBest) showCue('Best', { big:true, silent:true, ms:1100 });
   }
 
   /* ---- 図形メモリーモード ---- */
@@ -838,11 +980,11 @@ body{
 
   function patternStageClear(){
     setPhase('wait');
-    buzz([18,60,18]); sfx.clear();
+    var praised = celebrate(S.stage);
     S.stage++;
     later(function(){
       patternBanner('STAGE ' + S.stage, function(){ patternShow(); });
-    }, 520);
+    }, praised ? 1050 : 620);
   }
 
   function patternOver(){
@@ -952,11 +1094,11 @@ body{
 
   function seqStageClear(){
     setPhase('wait');
-    buzz([18,60,18]); sfx.clear();
+    var praised = celebrate(S.stage);
     S.stage++;
     later(function(){
       patternBanner('STAGE ' + S.stage, function(){ seqAppend(1); seqPlay(); });
-    }, 520);
+    }, praised ? 1050 : 620);
   }
 
   function seqOver(){
@@ -991,7 +1133,8 @@ body{
   function reset(){
     clearTimers(); cancelAnimationFrame(S.raf);
     confirmEl.hidden = true;
-    cue.hidden = true;
+    cue.hidden = true; cue.classList.remove('big');
+    fxClear();
     S.pauseAcc = 0; S.resumeTo = null;
     ovCount.classList.remove('txt');
     ovReadyLabel.textContent = MODE_INFO[S.mode].jp;
