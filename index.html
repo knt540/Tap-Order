@@ -190,6 +190,19 @@ body{
 .ov-meta{font-size:12px;color:var(--ink-dim)}
 .ov-best{font-size:12px;color:var(--brass);letter-spacing:.06em}
 
+/* 回答開始の合図 */
+.cue{
+  position:absolute;inset:0;
+  display:grid;place-items:center;
+  pointer-events:none;
+  border-radius:var(--r);
+  background:rgba(14,16,18,.42);
+  font-family:var(--fd);font-size:24px;font-weight:500;
+  letter-spacing:.24em;text-transform:uppercase;color:var(--brass);
+}
+.cue.fade{animation:cueOut .8s ease forwards}
+@keyframes cueOut{0%{opacity:1}65%{opacity:1}100%{opacity:0}}
+
 /* controls */
 .controls{display:flex;flex-direction:column;gap:10px}
 .sizes{display:flex;gap:6px}
@@ -213,6 +226,9 @@ body{
   cursor:pointer;
 }
 .go.ghost{background:transparent;border:1px solid var(--line);color:var(--ink-dim);font-weight:500}
+.go:disabled{opacity:.4;cursor:default}
+.run-row{display:flex;gap:8px}
+.run-row .go{flex:1}
 .records{
   display:flex;justify-content:space-between;
   font-size:11px;color:var(--ink-dim);letter-spacing:.04em;
@@ -253,7 +269,7 @@ body{
 .m-actions{display:flex;gap:8px;margin-top:2px}
 .m-actions .go{flex:2}
 .m-actions .go.ghost{flex:1}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}.cue.fade{animation:none}}
 </style>
 
 <div class="app notranslate" translate="no">
@@ -292,6 +308,7 @@ body{
         <span class="ov-best" id="ovBest"></span>
       </div>
     </div>
+    <div class="cue" id="cue" hidden>Your turn</div>
   </div>
 
   <div class="controls">
@@ -301,6 +318,10 @@ body{
       <button class="size" data-n="5" aria-pressed="true">5 × 5</button>
     </div>
     <button class="go" id="go">スタート</button>
+    <div class="run-row" id="runRow" hidden>
+      <button class="go ghost" id="pause">中断</button>
+      <button class="go ghost" id="abort">中止</button>
+    </div>
     <div class="records"><span id="bestLabel">ベスト（5×5）</span><b id="best">—</b></div>
   </div>
   <div class="modal" id="modal" hidden>
@@ -323,7 +344,8 @@ body{
       ovReadyLabel=$('ovReadyLabel'), ovCount=$('ovCount'), ovResult=$('ovResult'), ovLabel=$('ovLabel'), ovTime=$('ovTime'),
       ovMeta=$('ovMeta'), ovBest=$('ovBest'), statusEl=$('status'),
       st1k=$('st1k'), st1v=$('st1v'), st2k=$('st2k'), st2v=$('st2v'), st3k=$('st3k'), st3v=$('st3v'),
-      goBtn=$('go'), sizesEl=$('sizes'), modesEl=document.querySelector('.modes'),
+      goBtn=$('go'), pauseBtn=$('pause'), abortBtn=$('abort'), runRow=$('runRow'), cue=$('cue'),
+      sizesEl=$('sizes'), modesEl=document.querySelector('.modes'),
       bestEl=$('best'), bestLabel=$('bestLabel');
 
   var MAX_MISS = 3;
@@ -363,7 +385,7 @@ body{
 
   var S = {
     mode:'speed', n:5, phase:'idle', timers:[],
-    next:1, misses:0, t0:0, raf:0,          // 早押し
+    next:1, misses:0, t0:0, raf:0, pauseAcc:0, resumeTo:null,   // 早押し
     stage:1, k:3, found:0, target:[],       // 図形メモリー
     seq:[], step:0                          // 順番メモリー
   };
@@ -425,6 +447,7 @@ body{
     tick: function(){ pop({ f0: 440, f1: 410, dur: 0.05, gain: 0.08 }); },
     go:   function(){ pop({ f0: 760, f1: 700, dur: 0.13, gain: 0.13 }); },
     show: function(){ pop({ f0: 330, f1: 305, dur: 0.20, gain: 0.10 }); },
+    turn: function(){ pop({ f0: 520, f1: 790, dur: 0.12, gain: 0.13 }); },
     clear:function(){
       pop({ f0: 700, f1: 200, dur: 0.06, gain: 0.18, click: 0.07, at: 0 });
       pop({ f0: 880, f1: 240, dur: 0.06, gain: 0.18, click: 0.07, at: 0.09 });
@@ -534,8 +557,52 @@ body{
     each(modesEl.querySelectorAll('.mode'), function(b){
       if(b.dataset.mode) b.disabled = running;
     });
-    goBtn.textContent = running ? '中止' : (p==='result' ? 'もう一度' : 'スタート');
-    goBtn.classList.toggle('ghost', running);
+    goBtn.hidden = running;
+    runRow.hidden = !running;
+    goBtn.textContent = (p==='result') ? 'もう一度' : 'スタート';
+    pauseBtn.textContent = (p==='paused') ? '再開' : '中断';
+    // 出題中は中断できない（見直しに使えてしまうため）
+    pauseBtn.disabled = !(p==='playing' || p==='recall' || p==='paused');
+  }
+
+  // 回答開始の合図
+  function showCue(text){
+    cue.textContent = text || 'Your turn';
+    cue.hidden = false;
+    cue.classList.remove('fade');
+    void cue.offsetWidth;
+    cue.classList.add('fade');
+    sfx.turn();
+    later(function(){ cue.hidden = true; }, 800);
+  }
+
+  function pauseGame(){
+    if(S.phase==='playing'){
+      S.pauseAcc += performance.now() - S.t0;
+      cancelAnimationFrame(S.raf);
+    }
+    S.resumeTo = S.phase;
+    setPhase('paused');
+    ovCount.classList.add('txt');
+    ovCount.textContent = 'Paused';
+    setOverlay('count');
+  }
+
+  function resumeGame(){
+    if(S.resumeTo === 'playing'){
+      setPhase('count');
+      countdown(function(){
+        setOverlay(null);
+        setPhase('playing');
+        S.t0 = performance.now();
+        rushLoop();
+      });
+    } else {
+      ovCount.classList.remove('txt');
+      setOverlay(null);
+      setPhase('recall');
+      showCue();
+    }
   }
 
   function setOverlay(which){
@@ -569,8 +636,14 @@ body{
     buildNumbers(false);
   }
 
+  function elapsed(){ return S.pauseAcc + (performance.now() - S.t0); }
+  function rushLoop(){
+    st1v.textContent = fmt(elapsed());
+    S.raf = requestAnimationFrame(rushLoop);
+  }
+
   function speedStart(){
-    S.next=1; S.misses=0;
+    S.next=1; S.misses=0; S.pauseAcc=0;
     st1v.textContent='0.000'; st2v.textContent='1'; st3v.textContent='0';
     statusEl.classList.remove('warn');
     buildNumbers(true);
@@ -580,8 +653,7 @@ body{
       each(cells(), function(c){ c.classList.remove('veiled'); });
       setPhase('playing');
       S.t0=performance.now();
-      var loop=function(){ st1v.textContent=fmt(performance.now()-S.t0); S.raf=requestAnimationFrame(loop); };
-      S.raf=requestAnimationFrame(loop);
+      rushLoop();
     });
   }
 
@@ -605,7 +677,7 @@ body{
   }
 
   function speedFinish(){
-    var ms=performance.now()-S.t0;
+    var ms=elapsed();
     cancelAnimationFrame(S.raf);
     st1v.textContent=fmt(ms);
     var prev=readBest(), isBest = (prev===null || ms<prev);
@@ -691,6 +763,7 @@ body{
     later(function(){
       each(cells(), function(c){ c.classList.remove('lit'); });
       setPhase('recall');
+      showCue();
     }, showMs(S.stage));
   }
 
@@ -807,7 +880,7 @@ body{
         later(function(){ c.classList.remove('lit'); }, L);
       }, n * (L + G));
     });
-    later(function(){ setPhase('recall'); }, S.seq.length * (L + G) + 60);
+    later(function(){ setPhase('recall'); showCue(); }, S.seq.length * (L + G) + 60);
   }
 
   function seqTap(cell){
@@ -874,6 +947,8 @@ body{
 
   function reset(){
     clearTimers(); cancelAnimationFrame(S.raf);
+    cue.hidden = true;
+    S.pauseAcc = 0; S.resumeTo = null;
     ovCount.classList.remove('txt');
     ovReadyLabel.textContent = MODE_INFO[S.mode].jp;
     if(S.mode==='speed') speedReset(); else if(S.mode==='pattern') patternReset(); else seqReset();
@@ -907,9 +982,13 @@ body{
 
   goBtn.addEventListener('click', function(){
     ctx(); // 最初のタップで音声を有効化（モバイルの制約）
-    if(S.phase==='idle' || S.phase==='result') start();
-    else reset();
+    start();
   });
+  pauseBtn.addEventListener('click', function(){
+    if(S.phase==='paused') resumeGame();
+    else pauseGame();
+  });
+  abortBtn.addEventListener('click', function(){ reset(); });
 
   reset();
 
