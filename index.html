@@ -269,6 +269,13 @@ body{
 .m-actions{display:flex;gap:8px;margin-top:2px}
 .m-actions .go{flex:2}
 .m-actions .go.ghost{flex:1}
+.m-actions .go.danger{flex:1}
+.go.danger{
+  background:transparent;
+  border:1px solid var(--alert);
+  color:var(--alert);
+  font-weight:500;
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}.cue.fade{animation:none}}
 </style>
 
@@ -324,6 +331,18 @@ body{
     </div>
     <div class="records"><span id="bestLabel">ベスト（5×5）</span><b id="best">—</b></div>
   </div>
+  <div class="modal" id="confirm" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
+      <span class="m-eyebrow">Abort</span>
+      <h2 class="m-title" id="cfTitle">プレイを中止しますか？</h2>
+      <ul class="m-list"><li>今回の記録は保存されません</li></ul>
+      <div class="m-actions">
+        <button class="go" id="cfNo">続ける</button>
+        <button class="go danger" id="cfYes">中止する</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="modal" hidden>
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mTitle">
       <span class="m-eyebrow" id="mName">Rush</span>
@@ -493,11 +512,32 @@ body{
   }
   function closeHelp(){ modal.hidden = true; }
 
+  /* ---- 中止の確認 ---- */
+  var confirmEl=$('confirm'), wasPausedBefore=false;
+
+  function askAbort(){
+    wasPausedBefore = (S.phase === 'paused');
+    if(!wasPausedBefore) pauseGame();   // 考えている間はタイマーを止める
+    confirmEl.hidden = false;
+  }
+  function closeAbort(resume){
+    confirmEl.hidden = true;
+    if(resume && !wasPausedBefore) resumeGame();
+  }
+
+  $('cfYes').addEventListener('click', function(){ closeAbort(false); reset(); });
+  $('cfNo').addEventListener('click', function(){ closeAbort(true); });
+  confirmEl.addEventListener('click', function(e){ if(e.target===confirmEl) closeAbort(true); });
+
   $('help').addEventListener('click', openHelp);
   $('mClose').addEventListener('click', closeHelp);
   $('mStart').addEventListener('click', function(){ closeHelp(); ctx(); start(); });
   modal.addEventListener('click', function(e){ if(e.target===modal) closeHelp(); });
-  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) closeHelp(); });
+  document.addEventListener('keydown', function(e){
+    if(e.key!=='Escape') return;
+    if(!confirmEl.hidden) closeAbort(true);
+    else if(!modal.hidden) closeHelp();
+  });
 
   /* ---- 共通 ---- */
   function fmt(ms){ return (ms/1000).toFixed(3); }
@@ -561,8 +601,11 @@ body{
     runRow.hidden = !running;
     goBtn.textContent = (p==='result') ? 'もう一度' : 'スタート';
     pauseBtn.textContent = (p==='paused') ? '再開' : '中断';
-    // 出題中は中断できない（見直しに使えてしまうため）
-    pauseBtn.disabled = !(p==='playing' || p==='recall' || p==='paused');
+    // 出題中は中断・中止ともに受け付けない
+    // （中断は見直しに使えてしまうため、中止は確認中にタイマーを止められないため）
+    var interruptible = (p==='playing' || p==='recall' || p==='paused');
+    pauseBtn.disabled = !interruptible;
+    abortBtn.disabled = !interruptible;
   }
 
   // 回答開始の合図
@@ -947,6 +990,7 @@ body{
 
   function reset(){
     clearTimers(); cancelAnimationFrame(S.raf);
+    confirmEl.hidden = true;
     cue.hidden = true;
     S.pauseAcc = 0; S.resumeTo = null;
     ovCount.classList.remove('txt');
@@ -988,7 +1032,7 @@ body{
     if(S.phase==='paused') resumeGame();
     else pauseGame();
   });
-  abortBtn.addEventListener('click', function(){ reset(); });
+  abortBtn.addEventListener('click', askAbort);
 
   reset();
 
