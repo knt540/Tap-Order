@@ -571,17 +571,28 @@ body{
   // 通常UIは真鍮一色のまま。色が出るのはこの演出の中だけ
   var FX_COLORS = ['#C6A96B','#E8C98A','#F2E4C4','#D98E5A','#7FB39B','#C96F8F'];
 
-  // ステージが上がるほど段階的に派手にする
-  function tierFor(stage){
-    if(stage >= 30) return 5;
-    if(stage >= 20) return 4;
-    if(stage >= 10) return 3;
-    if(stage >= 5)  return 2;
-    if(stage >= 3)  return 1;
-    return 0;
-  }
+  // ステージが上がるほど段階的に派手にする。
+  // 到達しやすさがモードで違うので、段階の刻みも分ける。
+  // Flash は点灯数が5で頭打ちになるぶんステージを重ねやすく、
+  // Echo は列がそのまま伸び続けるので同じ数字でも格段に重い。
+  var TIERS = {
+    pattern:  [4, 8, 13, 20, 30],
+    sequence: [3, 5,  8, 11, 15]
+  };
+  var PRAISE_BY = {
+    pattern:  { 5:'Nice', 10:'Great', 15:'Superb', 20:'Amazing', 25:'Unreal', 35:'Legend' },
+    sequence: { 3:'Nice',  5:'Great',  8:'Superb', 11:'Amazing', 15:'Unreal', 20:'Legend' }
+  };
 
-  var PRAISE = { 3:'Nice', 5:'Great', 10:'Superb', 15:'Amazing', 20:'Unreal', 30:'Legend' };
+  function tierFor(stage){
+    var t = TIERS[S.mode] || TIERS.pattern, n = 0;
+    for(var i=0;i<t.length;i++) if(stage >= t[i]) n = i + 1;
+    return n;
+  }
+  function praiseFor(stage){
+    var m = PRAISE_BY[S.mode] || {};
+    return m[stage] || null;
+  }
 
   function fxResize(){
     var r = fx.parentNode.getBoundingClientRect();
@@ -668,7 +679,7 @@ body{
     boardWrap.classList.add('pulse');
     if(tier >= 3) boardWrap.classList.add('shake');
     later(function(){ boardWrap.classList.remove('pulse','shake'); }, 700);
-    var word = PRAISE[stage];
+    var word = praiseFor(stage);
     if(word){ showCue(word, { big:true, silent:true, ms:1000 }); return true; }
     return false;
   }
