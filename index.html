@@ -77,17 +77,30 @@ body{
 .snd[aria-pressed="true"]{color:var(--ink);border-color:var(--brass-soft)}
 .snd[aria-pressed="true"] .dot{background:var(--brass)}
 .snd:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.help{
+  width:26px;height:26px;
+  display:grid;place-items:center;
+  background:transparent;
+  border:1px solid var(--line);
+  border-radius:50%;
+  color:var(--ink-dim);
+  font-family:var(--fd);font-size:13px;
+  cursor:pointer;
+}
+.help:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .modes{display:flex;gap:6px}
 .mode{
   flex:1;
-  padding:9px 4px 8px;
+  padding:12px 4px;
   background:transparent;
   border:1px solid var(--line);
   border-radius:var(--r);
   color:var(--ink-dim);
-  font-family:var(--fb);
-  font-size:12px;
-  letter-spacing:.04em;
+  font-family:var(--fd);
+  font-size:13px;
+  font-weight:500;
+  letter-spacing:.16em;
+  text-transform:uppercase;
   cursor:pointer;
 }
 .mode[aria-selected="true"]{
@@ -96,7 +109,6 @@ body{
   background:linear-gradient(180deg,rgba(198,169,107,.10),rgba(198,169,107,.02));
 }
 .mode:disabled{opacity:.38;cursor:default}
-.mode small{display:block;font-size:9px;letter-spacing:.1em;margin-top:2px;color:var(--brass-soft)}
 
 /* status */
 .status{
@@ -207,6 +219,40 @@ body{
   padding:0 2px;
 }
 .records b{color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums}
+/* 遊び方ポップアップ */
+.modal{
+  position:fixed;inset:0;z-index:20;
+  display:grid;place-items:center;
+  padding:22px;
+  background:rgba(8,9,10,.86);
+}
+.sheet{
+  width:100%;max-width:380px;
+  display:flex;flex-direction:column;gap:14px;
+  padding:22px 20px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:14px;
+}
+.m-eyebrow{
+  font-family:var(--fd);font-size:11px;font-weight:500;
+  letter-spacing:.2em;text-transform:uppercase;color:var(--brass);
+}
+.m-title{
+  margin:0;
+  font-size:17px;font-weight:500;line-height:1.5;
+  text-wrap:balance;
+}
+.m-list{
+  list-style:none;margin:0;padding:0;
+  display:flex;flex-direction:column;gap:9px;
+  font-size:13px;line-height:1.6;color:var(--ink-dim);
+}
+.m-list li{display:flex;gap:10px}
+.m-list li::before{content:"—";color:var(--brass-soft);flex:none}
+.m-actions{display:flex;gap:8px;margin-top:2px}
+.m-actions .go{flex:2}
+.m-actions .go.ghost{flex:1}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
@@ -214,14 +260,15 @@ body{
   <header class="brand">
     <h1>Tap&nbsp;Order</h1>
     <div class="right">
+      <button class="help" id="help" aria-label="遊び方を見る">?</button>
       <button class="snd" id="snd" aria-pressed="true" aria-label="効果音の切り替え"><span class="dot"></span>Sound</button>
     </div>
   </header>
 
   <div class="modes" role="tablist" aria-label="モード">
-    <button class="mode" role="tab" data-mode="speed" aria-selected="true">早押し</button>
-    <button class="mode" role="tab" data-mode="sequence" aria-selected="false">順番メモリー</button>
-    <button class="mode" role="tab" data-mode="pattern" aria-selected="false">図形メモリー</button>
+    <button class="mode" role="tab" data-mode="speed" aria-selected="true">Rush</button>
+    <button class="mode" role="tab" data-mode="pattern" aria-selected="false">Flash</button>
+    <button class="mode" role="tab" data-mode="sequence" aria-selected="false">Echo</button>
   </div>
 
   <div class="status" id="status">
@@ -234,7 +281,7 @@ body{
     <div class="board" id="board"></div>
     <div class="overlay" id="overlay">
       <div class="ov-inner" id="ovReady">
-        <span class="ov-label">Ready</span>
+        <span class="ov-label" id="ovReadyLabel">Ready</span>
         <span class="ov-meta" id="ovHint">小さい数字から順にタップ</span>
       </div>
       <div class="count" id="ovCount" hidden>3</div>
@@ -256,20 +303,63 @@ body{
     <button class="go" id="go">スタート</button>
     <div class="records"><span id="bestLabel">ベスト（5×5）</span><b id="best">—</b></div>
   </div>
+  <div class="modal" id="modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+      <span class="m-eyebrow" id="mName">Rush</span>
+      <h2 class="m-title" id="mTitle"></h2>
+      <ul class="m-list" id="mList"></ul>
+      <div class="m-actions">
+        <button class="go" id="mStart">はじめる</button>
+        <button class="go ghost" id="mClose">閉じる</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var board=$('board'), overlay=$('overlay'), ovReady=$('ovReady'), ovHint=$('ovHint'),
-      ovCount=$('ovCount'), ovResult=$('ovResult'), ovLabel=$('ovLabel'), ovTime=$('ovTime'),
+      ovReadyLabel=$('ovReadyLabel'), ovCount=$('ovCount'), ovResult=$('ovResult'), ovLabel=$('ovLabel'), ovTime=$('ovTime'),
       ovMeta=$('ovMeta'), ovBest=$('ovBest'), statusEl=$('status'),
       st1k=$('st1k'), st1v=$('st1v'), st2k=$('st2k'), st2v=$('st2v'), st3k=$('st3k'), st3v=$('st3v'),
       goBtn=$('go'), sizesEl=$('sizes'), modesEl=document.querySelector('.modes'),
       bestEl=$('best'), bestLabel=$('bestLabel');
 
-  var MAX_K = 5;        // 図形メモリーの点灯数の上限
   var MAX_MISS = 3;
+
+  var MODE_INFO = {
+    speed: {
+      name:'Rush', jp:'ナンバーラッシュ',
+      title:'散らばった数字を、小さい順にできるだけ速く',
+      lines:[
+        '1 から順に、数字のマスをタップしていきます',
+        '最後の数字を押すまでのタイムがスコアです',
+        '押し間違えても止まりません（ミス数だけ記録されます）',
+        '盤面は 3×3 / 4×4 / 5×5 から選べます'
+      ]
+    },
+    pattern: {
+      name:'Flash', jp:'フラッシュ記憶',
+      title:'一瞬だけ光ったマスを、全部おぼえて押し返す',
+      lines:[
+        '複数のマスが同時に光り、すぐ消えます',
+        '光っていたマスを、順番は自由に全部タップします',
+        '間違えるとそのステージは別の問題でやり直し',
+        'ミス3回で終了。進んだステージ数がスコアです'
+      ]
+    },
+    sequence: {
+      name:'Echo', jp:'順番エコー',
+      title:'光った順番を、そのままなぞり返す',
+      lines:[
+        'マスが1つずつ、順番に光ります',
+        '同じ順番でタップして再現します',
+        'ステージが進むと末尾に1つ増えます（前の順番はそのまま）',
+        'ミス3回で終了。進んだステージ数がスコアです'
+      ]
+    }
+  };
 
   var S = {
     mode:'speed', n:5, phase:'idle', timers:[],
@@ -363,6 +453,29 @@ body{
   });
   paintSnd();
 
+  /* ---- 遊び方ポップアップ ---- */
+  var modal=$('modal'), mName=$('mName'), mTitle=$('mTitle'), mList=$('mList');
+
+  function openHelp(){
+    var info = MODE_INFO[S.mode];
+    mName.textContent = info.name + ' ／ ' + info.jp;
+    mTitle.textContent = info.title;
+    mList.textContent = '';
+    info.lines.forEach(function(t){
+      var li=document.createElement('li');
+      li.appendChild(document.createTextNode(t));
+      mList.appendChild(li);
+    });
+    modal.hidden = false;
+  }
+  function closeHelp(){ modal.hidden = true; }
+
+  $('help').addEventListener('click', openHelp);
+  $('mClose').addEventListener('click', closeHelp);
+  $('mStart').addEventListener('click', function(){ closeHelp(); ctx(); start(); });
+  modal.addEventListener('click', function(e){ if(e.target===modal) closeHelp(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) closeHelp(); });
+
   /* ---- 共通 ---- */
   function fmt(ms){ return (ms/1000).toFixed(3); }
   function key(){ return 'tapOrder.best.' + S.mode + '.' + S.n; }
@@ -452,7 +565,7 @@ body{
     st2k.textContent='Next'; st2v.textContent='1';
     st3k.textContent='Miss'; st3v.textContent='0';
     statusEl.classList.remove('warn');
-    ovHint.textContent='小さい数字から順にタップ';
+    ovHint.textContent=MODE_INFO.speed.title;
     buildNumbers(false);
   }
 
@@ -506,15 +619,23 @@ body{
   }
 
   /* ---- 図形メモリーモード ---- */
-  function kFor(stage){ return Math.min(MAX_K, 2 + stage); }
+  // 点灯数の上限。盤面が広いほど多く出せる
+  function kCap(){ return S.n===3 ? 6 : S.n===4 ? 9 : 12; }
 
-  // 上限に達したあとは表示時間を1ステージごとに10%短縮（下限0.5秒）
+  // 3→4→5 と増えたあとは、10ステージごとに1つ増える
+  function kFor(stage){
+    if(stage <= 3) return Math.min(kCap(), 2 + stage);
+    return Math.min(kCap(), 5 + Math.floor((stage - 3) / 10));
+  }
+  // その点灯数になった最初のステージ
+  function kFirstStage(k){ return k <= 5 ? k - 2 : 10 * (k - 5) + 3; }
+
+  // 表示時間は1ステージごとに6%短縮。点灯数が増えるたびに少し戻る
   function showMs(stage){
     var k = kFor(stage);
-    var t = Math.min(3500, 900 + 220 * k);
-    var capStage = MAX_K - 2;               // kが上限に達するステージ
-    if(stage > capStage) t *= Math.pow(0.9, stage - capStage);
-    return Math.max(500, Math.round(t));
+    var base = Math.min(3500, 900 + 220 * k);
+    var since = Math.max(0, stage - kFirstStage(k));
+    return Math.max(500, Math.round(base * Math.pow(0.94, since)));
   }
 
   function patternReset(){
@@ -523,7 +644,7 @@ body{
     st2k.textContent='Found'; st2v.textContent='0 / ' + kFor(1);
     st3k.textContent='Miss';  st3v.textContent='0 / ' + MAX_MISS;
     statusEl.classList.remove('warn');
-    ovHint.textContent='光ったマスを全部おぼえてタップ';
+    ovHint.textContent=MODE_INFO.pattern.title;
     buildBlank();
   }
 
@@ -643,7 +764,7 @@ body{
     st2k.textContent='Step';  st2v.textContent='0 / 3';
     st3k.textContent='Miss';  st3v.textContent='0 / ' + MAX_MISS;
     statusEl.classList.remove('warn');
-    ovHint.textContent='光った順番どおりにタップ';
+    ovHint.textContent=MODE_INFO.sequence.title;
     buildBlank();
   }
 
@@ -747,6 +868,7 @@ body{
   function reset(){
     clearTimers(); cancelAnimationFrame(S.raf);
     ovCount.classList.remove('txt');
+    ovReadyLabel.textContent = MODE_INFO[S.mode].jp;
     if(S.mode==='speed') speedReset(); else if(S.mode==='pattern') patternReset(); else seqReset();
     setOverlay('ready');
     setPhase('idle');
@@ -765,6 +887,7 @@ body{
     S.mode=b.dataset.mode;
     each(modesEl.querySelectorAll('.mode'), function(x){ x.setAttribute('aria-selected', String(x===b)); });
     reset();
+    openHelp();
   });
 
   sizesEl.addEventListener('click', function(e){
@@ -782,6 +905,14 @@ body{
   });
 
   reset();
+
+  // はじめて開いたときだけ、遊び方を自動で出す
+  try {
+    if(localStorage.getItem('tapOrder.seenHelp') !== '1'){
+      openHelp();
+      localStorage.setItem('tapOrder.seenHelp','1');
+    }
+  } catch(e){}
 })();
 
 // オフライン起動用。https（またはlocalhost）配信のときだけ有効になる。
