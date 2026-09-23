@@ -1,9 +1,10 @@
 /* Tap Order - offline cache */
-var CACHE = 'tap-order-v3';
+var CACHE = 'tap-order-v4';
 var SHELL = [
   './',
   './index.html',
   './manifest.json',
+  './icon-180.png',
   './icon-192.png',
   './icon-512.png'
 ];
