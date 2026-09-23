@@ -1,5 +1,5 @@
 /* Tap Order - offline cache */
-var CACHE = 'tap-order-v6';
+var CACHE = 'tap-order-v7';
 var SHELL = [
   './',
   './index.html',

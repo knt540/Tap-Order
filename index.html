@@ -630,12 +630,14 @@ body{
   // その点灯数になった最初のステージ
   function kFirstStage(k){ return k <= 5 ? k - 2 : 10 * (k - 5) + 3; }
 
-  // 表示時間は1ステージごとに6%短縮。点灯数が増えるたびに少し戻る
+  // 表示時間は1ステージごとに6%短縮。点灯数が増えるたびに少し戻る。
+  // 下限100msは、フラッシュ暗算の世界記録（3桁15口を1.61秒＝1口あたり約0.107秒）に合わせたもの
+  var FLASH_FLOOR = 100;
   function showMs(stage){
     var k = kFor(stage);
     var base = Math.min(3500, 900 + 220 * k);
     var since = Math.max(0, stage - kFirstStage(k));
-    return Math.max(500, Math.round(base * Math.pow(0.94, since)));
+    return Math.max(FLASH_FLOOR, Math.round(base * Math.pow(0.94, since)));
   }
 
   function patternReset(){
@@ -741,15 +743,20 @@ body{
   }
 
   /* ---- 順番メモリーモード（Simon型：列は継ぎ足していく） ---- */
-  function litMs(stage){
-    var t = 500;
-    if(stage > 5) t *= Math.pow(0.92, stage - 5);
-    return Math.max(220, Math.round(t));
-  }
-  function gapMs(stage){
-    var t = 250;
-    if(stage > 5) t *= Math.pow(0.92, stage - 5);
-    return Math.max(110, Math.round(t));
+  // 1ステップの長さはステージごとに8%短縮（下限 点灯120ms／間隔60ms）。
+  // それでも再生全体が5秒を超える場合は、列の長さに合わせてさらに詰める
+  // （絶対下限 点灯90ms／間隔45ms）。列が伸びても再生が間延びしない。
+  function seqTiming(stage, len){
+    var f = stage > 5 ? Math.pow(0.92, stage - 5) : 1;
+    var lit = Math.max(120, 500 * f);
+    var gap = Math.max(60, 250 * f);
+    var total = len * (lit + gap);
+    if(total > 5000){
+      var r = 5000 / total;
+      lit = Math.max(90, lit * r);
+      gap = Math.max(45, gap * r);
+    }
+    return { lit: Math.round(lit), gap: Math.round(gap) };
   }
 
   function seqStatus(){
@@ -791,7 +798,7 @@ body{
     S.step=0; seqStatus();
     var list = cells();
     each(list, function(c){ c.className='cell'; });
-    var L = litMs(S.stage), G = gapMs(S.stage);
+    var t = seqTiming(S.stage, S.seq.length), L = t.lit, G = t.gap;
     S.seq.forEach(function(idx, n){
       later(function(){
         var c = cells()[idx];
