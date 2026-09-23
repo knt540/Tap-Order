@@ -220,7 +220,7 @@ body{
 
   <div class="modes" role="tablist" aria-label="モード">
     <button class="mode" role="tab" data-mode="speed" aria-selected="true">早押し</button>
-    <button class="mode" role="tab" aria-selected="false" disabled>順番メモリー<small>準備中</small></button>
+    <button class="mode" role="tab" data-mode="sequence" aria-selected="false">順番メモリー</button>
     <button class="mode" role="tab" data-mode="pattern" aria-selected="false">図形メモリー</button>
   </div>
 
@@ -274,7 +274,8 @@ body{
   var S = {
     mode:'speed', n:5, phase:'idle', timers:[],
     next:1, misses:0, t0:0, raf:0,          // 早押し
-    stage:1, k:3, found:0, target:[]        // 図形メモリー
+    stage:1, k:3, found:0, target:[],       // 図形メモリー
+    seq:[], step:0                          // 順番メモリー
   };
 
   /* ---- 効果音（WebAudioで合成。音源ファイルなしでオフラインでも鳴る） ---- */
@@ -318,6 +319,15 @@ body{
     }
   }
 
+  // マスごとの音程。ペンタトニックに乗せるので、どの順に鳴っても濁らない
+  var PENTA = [0,2,4,7,9];
+  function cellFreq(i){
+    var total = S.n * S.n;
+    var d = total > 1 ? Math.round(i * 10 / (total - 1)) : 0;   // 0〜10（約2オクターブ）
+    var semi = PENTA[d % 5] + 12 * Math.floor(d / 5);
+    return 220 * Math.pow(2, semi / 12);
+  }
+
   // 同じ音の連打に聞こえないよう、押すたびに少しだけ音程を散らす
   var sfx = {
     tap:  function(){ pop({ f0: 680 + Math.random()*320, f1: 150, dur: 0.055, gain: 0.20, click: 0.09 }); },
@@ -329,6 +339,12 @@ body{
       pop({ f0: 700, f1: 200, dur: 0.06, gain: 0.18, click: 0.07, at: 0 });
       pop({ f0: 880, f1: 240, dur: 0.06, gain: 0.18, click: 0.07, at: 0.09 });
       pop({ f0:1150, f1: 300, dur: 0.10, gain: 0.20, click: 0.08, at: 0.18 });
+    },
+    note: function(i, o){
+      o = o || {};
+      var f = cellFreq(i);
+      pop({ type:'triangle', f0: f, f1: f*0.995,
+            dur: o.dur || 0.22, gain: o.gain || 0.16, click: o.click || 0, clickHz: 3000 });
     },
     over: function(){
       pop({ type:'triangle', f0: 520, f1: 300, dur: 0.14, gain: 0.15, at: 0 });
@@ -603,6 +619,115 @@ body{
     sfx.over();
   }
 
+  /* ---- 順番メモリーモード（Simon型：列は継ぎ足していく） ---- */
+  function litMs(stage){
+    var t = 500;
+    if(stage > 5) t *= Math.pow(0.92, stage - 5);
+    return Math.max(220, Math.round(t));
+  }
+  function gapMs(stage){
+    var t = 250;
+    if(stage > 5) t *= Math.pow(0.92, stage - 5);
+    return Math.max(110, Math.round(t));
+  }
+
+  function seqStatus(){
+    st1v.textContent = S.stage;
+    st2v.textContent = S.step + ' / ' + S.seq.length;
+    st3v.textContent = S.misses + ' / ' + MAX_MISS;
+  }
+
+  function seqReset(){
+    S.stage=1; S.misses=0; S.seq=[]; S.step=0;
+    st1k.textContent='Stage'; st1v.textContent='1';
+    st2k.textContent='Step';  st2v.textContent='0 / 3';
+    st3k.textContent='Miss';  st3v.textContent='0 / ' + MAX_MISS;
+    statusEl.classList.remove('warn');
+    ovHint.textContent='光った順番どおりにタップ';
+    buildBlank();
+  }
+
+  // 直前と同じマスは続けない（点灯が繋がって1回に見えてしまうため）
+  function seqAppend(count){
+    var total = S.n * S.n;
+    for(var c=0;c<count;c++){
+      var last = S.seq.length ? S.seq[S.seq.length-1] : -1, i;
+      do { i = Math.floor(Math.random()*total); } while(total > 1 && i === last);
+      S.seq.push(i);
+    }
+  }
+
+  function seqStart(){
+    S.stage=1; S.misses=0; S.seq=[]; S.step=0;
+    buildBlank(); seqStatus();
+    setPhase('count');
+    countdown(function(){ seqAppend(3); seqPlay(); });
+  }
+
+  function seqPlay(){
+    setOverlay(null);
+    setPhase('show');
+    S.step=0; seqStatus();
+    var list = cells();
+    each(list, function(c){ c.className='cell'; });
+    var L = litMs(S.stage), G = gapMs(S.stage);
+    S.seq.forEach(function(idx, n){
+      later(function(){
+        var c = cells()[idx];
+        c.classList.add('lit');
+        sfx.note(idx); buzz(10);
+        later(function(){ c.classList.remove('lit'); }, L);
+      }, n * (L + G));
+    });
+    later(function(){ setPhase('recall'); }, S.seq.length * (L + G) + 60);
+  }
+
+  function seqTap(cell){
+    var i = +cell.dataset.i;
+    if(i === S.seq[S.step]){
+      cell.classList.add('lit');
+      (function(c){ later(function(){ c.classList.remove('lit'); }, 140); })(cell);
+      sfx.note(i, { dur:0.16, click:0.06 }); buzz(8);
+      S.step++; seqStatus();
+      if(S.step === S.seq.length) seqStageClear();
+    } else {
+      S.misses++; seqStatus();
+      statusEl.classList.add('warn');
+      cell.classList.add('miss');
+      buzz(40); sfx.miss();
+      setPhase('wait');
+      later(function(){ statusEl.classList.remove('warn'); }, 400);
+      if(S.misses >= MAX_MISS){
+        later(seqOver, 700);
+      } else {
+        // 同じ列をもう一度再生して、同じステージをやり直す
+        later(function(){ patternBanner('RETRY', function(){ seqPlay(); }); }, 700);
+      }
+    }
+  }
+
+  function seqStageClear(){
+    setPhase('wait');
+    buzz([18,60,18]); sfx.clear();
+    S.stage++;
+    later(function(){
+      patternBanner('STAGE ' + S.stage, function(){ seqAppend(1); seqPlay(); });
+    }, 520);
+  }
+
+  function seqOver(){
+    var cleared = S.stage - 1;
+    var prev=readBest(), isBest = (cleared > 0 && (prev===null || cleared>prev));
+    if(isBest) writeBest(cleared);
+    ovLabel.textContent='Game Over';
+    ovTime.textContent='STAGE ' + cleared;
+    ovMeta.textContent='ミス ' + S.misses + ' ／ ' + S.n + '×' + S.n;
+    ovBest.textContent = isBest ? '自己ベスト更新' : (prev===null ? '' : 'ベスト STAGE ' + prev);
+    ovCount.classList.remove('txt');
+    setOverlay('result'); setPhase('result'); showBest();
+    sfx.over();
+  }
+
   /* ---- 入力とモード切替 ---- */
   board.addEventListener('pointerdown', function(e){
     var cell = e.target.closest('.cell');
@@ -610,16 +735,19 @@ body{
     if(S.mode==='speed'){
       if(S.phase!=='playing') return;
       speedTap(cell);
-    } else {
+    } else if(S.mode==='pattern'){
       if(S.phase!=='recall') return;
       patternTap(cell);
+    } else {
+      if(S.phase!=='recall') return;
+      seqTap(cell);
     }
   });
 
   function reset(){
     clearTimers(); cancelAnimationFrame(S.raf);
     ovCount.classList.remove('txt');
-    if(S.mode==='speed') speedReset(); else patternReset();
+    if(S.mode==='speed') speedReset(); else if(S.mode==='pattern') patternReset(); else seqReset();
     setOverlay('ready');
     setPhase('idle');
     showBest();
@@ -628,7 +756,7 @@ body{
   function start(){
     clearTimers(); cancelAnimationFrame(S.raf);
     ovCount.classList.remove('txt');
-    if(S.mode==='speed') speedStart(); else patternStart();
+    if(S.mode==='speed') speedStart(); else if(S.mode==='pattern') patternStart(); else seqStart();
   }
 
   modesEl.addEventListener('click', function(e){
